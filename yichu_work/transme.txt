@@ -1,0 +1,344 @@
+================================================================================
+                    数据采集全流程技术概览
+                    yichu_work 项目
+================================================================================
+
+目录结构：
+  sdk_robot-main/examples/        -- 机器人控制脚本
+  data_collection/                -- 数据采集管线（核心）
+  datasets/                       -- 采集数据存储
+  lerobot/                        -- LeRobot 库
+
+================================================================================
+一、机器人控制与复位
+================================================================================
+
+sdk_robot-main/examples/robot_control_yichu.py
+【主要作用】通过 Typer CLI 控制机器人姿态：腰部升降、头部回中/转动、双臂归零、底盘移动
+【关键模块】
+  - set_work_mode(RobotWorkMode.SDK) + set_manipulator_control_mode(MANIPULATOR_JOINT_POSITIONS)：
+    将机器人切换到 SDK 控制模式（3次重试）
+  - 腰部升降：--lift-to 用 set_lift_position + 循环检测位置误差(±5mm, 最多30次)；
+    --lift-move 相对移动；--lift-zero 归零
+  - 头部控制：--head 回中；--head-pitch-to/--head-yaw-to 绝对角度（单位度），
+    按 quanta_x1/x2 模型限幅 clamp
+  - 双臂归零：--arms 调用 robot_control.homing()
+  - 底盘移动：--chassis-x/y/yaw 用 VELOCITY 模式开环控制，定时发送 set_velocity
+
+================================================================================
+二、数据录制（核心管线）
+================================================================================
+
+2.1. 配置层
+
+data_collection/collection_config.py
+【主要作用】定义可采集的传感器列表，CollectionConfig dataclass
+【关键模块】
+  - 30+ 个布尔型 enable_* 字段：关节状态（6路）、相机（4路RGB/深度）、
+    末端位姿（左/右/腰）、里程计/IMU/力传感器/触觉/ToF/超声波/主臂数据
+  - slave_joint_names: 指定采集哪些关节组（left_arm, right_arm, lift, waist, 
+    left_gripper, right_gripper, head）
+  - slave_action_names: 自动从 joint_names 生成或手动指定
+  - get_camera_names() / get_enabled_sensors(): 返回启用的传感器名列表
+  - 静态工厂方法 arm_gripper_cameras() 提供预设配置
+
+2.2. 核心采集引擎
+
+data_collection/data_collector.py（~3778行）
+【主要作用】通用传感器数据采集器，支持所有传感器类型的实时流式采集和保存
+【关键模块】
+  【初始化 __init__】
+    - 根据 CollectionConfig 构建 sensor_file_locks（每个传感器一把线程锁）
+    - 每路相机一个 image_file_locks
+    - 使用 pickle + 临时文件存储（非队列），避免高频数据内存溢出：
+      * 每路 sensor/action 分配临时 .pkl 文件
+      * 每路 camera 分配临时 .pkl 文件（存储 JPEG 压缩后的字节）
+    - 单次录制支持 15 分钟缓冲（降采样模式 = 
+    ×900s，高频模式 = 500Hz×900s）
+    - 注册 atexit 和信号处理 SIGINT/SIGTERM 确保临时文件清理
+
+  【录制生命周期】
+    start_recording(task):
+      - 根据配置启动对应传感器采集线程（每个传感器一个 daemon 线程）
+      - 创建临时文件、清空统计、启动相机数据监控线程
+    stop_recording():
+      - 停止采集 → 等待线程退出 → 读取临时文件 → 数据对齐 → 保存 episode
+    delete_last_episode(): 删除最近一期 episode（回滚计数器 + 删目录 + metadata）
+
+  【采集线程体系】（每路传感器独立 daemon 线程）
+    _collect_*_joint_states() → 通用 _collect_joint_state_stream()
+      - 调用 SDK stream_func(timeout=None) 获取 gRPC streaming
+      - 首次消息解析关节名称（支持 name 字段自动检测，或按 len(position) 推断）
+      - 每帧提取 (timestamp, positions, velocities, efforts)，pickle.dump 到临时文件
+      - 支持按部分采集：left_arm / right_arm / lift / waist / left_gripper / right_gripper / head
+
+    _collect_*_rgb_stream() → _collect_camera_stream()
+      - 获取 gRPC stream → bytes → PIL.Image.open → JPEG 压缩 → pickle.dump(timestamp, jpeg_bytes)
+      - 支持 head / left_arm / right_arm 三路 RGB 相机
+
+    _collect_depth_stream()
+      - 3 种深度数据解析策略：① Image.open 图像模式 ② float32 数组 reshape ③ 原始 bytes
+
+    _collect_imu() → chassis IMU
+    _collect_pose_stream() → 末端位姿（position + orientation 四元数）
+    _collect_generic_stream() → 通用传感器（里程计、激光、触觉等），protobuf → dict 递归转换
+
+  【相机数据监控 _monitor_camera_data】
+    - 后台线程，每 1s 检查一次，5s 超时检测无数据的相机 → os._exit(1)
+
+  【数据收集 _collect_episode_data】
+    - 遍历 sensor_file_locks，关闭写句柄、重开读、pickle.load 读取全部帧
+    - 每路相机 jpeg_bytes → PIL.Image（非 video 模式）/ 仅读取时间戳（video 模式）
+    - 调用 _validate_collected_data 检查所有启用传感器是否都有数据
+
+  【时间戳对齐 _align_data_by_timestamp】
+    - 以 head_camera 时间戳为主基准线
+    - 高频率数据（关节状态）使用线性插值 _interpolate_linear()
+    - 低频率传感器（位姿、IMU）使用最近邻插值 _interpolate_nearest()
+    - video 模式：非主相机通过 _interpolate_nearest_indices 建立帧索引映射
+
+  【插值实现】
+    _interpolate_linear(data_with_timestamps, target_timestamps):
+      - numpy.searchsorted 定位，线性插值 position/velocity/effort
+      - 边界情况：target_t 超出范围时取最近端点
+    _interpolate_nearest():
+      - 遍历 target_timestamps，在 sorted_data 中找最近邻居
+      - 优化：data_idx 游标避免从头搜索
+
+  【视频生成 _create_video_with_ffmpeg】
+    - 子进程 ffmpeg → image2pipe → libx264
+    - 读取临时 .pkl → PIL.Image → JPEG bytes → stdin pipe
+    - 支持黑帧填充（索引越界时）
+    - 定时 GC 释放已过帧（frame_idx % 100 == 99）
+
+  【Episode 保存 _save_episode】
+    - 输出结构：episode_XXXX/episode.json
+    - video 模式：每个相机生成 .mp4 + 记录帧索引映射
+    - image 模式：每帧每相机存为 .jpg（RGB）/ .png（深度）/ .npz（浮点深度）
+    - action 构建：使用下一个帧的 state 作为 action（模仿学习约定）
+    - 原子写入：临时文件 → rename，防止中断导致半文件
+    - 更新 dataset_metadata.json
+
+2.3. 全量录制入口
+
+data_collection/record.py
+【主要作用】主录制 CLI，交互式采集全模态数据
+【关键模块】
+  - CollectionConfig 启用：6路关节 + 3路RGB相机 + 末端位姿 + 里程计 + IMU
+  - DataCollector(use_video_storage=True, downsample_joint_states=True)
+  - 交互循环：按 Enter 开始 → 录制中实时 print_stats → Enter 停止 → y/n/r 保存/退出/重录
+
+data_collection/record_no_reset.py
+【主要作用】同上，但硬编码 TASK_NAME，不移除重录功能（适合连续录制同一任务）
+
+2.4. 仅关节录制（轻量版）
+
+data_collection/record_joint.py
+【主要作用】只录制左右臂关节数据，输出 .npz + episode.json，不包含图像
+【关键模块】
+  - JointRecorder 类：robot.state.get_all_joint_states_stream
+  - 通过关节名前缀自动识别左右臂关节索引（left_arm_joint / right_arm_joint）
+  - 使用临时 .pkl 文件缓冲，录制结束后读取、拼装 numpy 数组
+  - 输出：joint_data.npz（timestamps, left_arm_position, right_arm_position, 
+    left/right_velocity, left/right_effort）+ episode.json（元信息）
+
+data_collection/record_joint_lqt.py
+【主要作用】优化版关节录制，解决录制端卡顿问题，增加诊断信息
+【关键模块】
+  【核心优化】
+    - 内存 buffer 替代 pickle.dump + flush（录制线程只 append list，不写盘）
+    - 同时保存 wall-clock + monotonic 两种时间戳
+    - 自动跳过坏帧（position None / 维度异常）
+    - 原子写入：tempfile.NamedTemporaryFile → replace（防止中断半文件）
+  
+  【JointRecorder 实现】
+    - _record_worker(): msg → pos/vel/eff → 按关节索引提取 → dict → list.append
+    - 支持左/右臂 + 左/右夹爪的 position/velocity/effort
+    - stop_recording(): list.sort(key=mono_ts) → 构建 numpy 数组 → np.savez_compressed
+    - 输出新增字段：monotonic_timestamps, relative_timestamps, gripper 系列
+    - episode.json 新增诊断：timing.dt_mean/dt_std/dt_p95/dt_max, bad_frame_count
+
+data_collection/record_joint_.py
+【主要作用】旧版关节录制（被 record_joint.py 取代，保留兼容）
+
+================================================================================
+三、数据回放
+================================================================================
+
+data_collection/replay_joint.py
+【主要作用】基础关节回放
+
+data_collection/replay_joint_zm1.py
+【主要作用】安全关节回放，支持两种回放模式
+【关键模块】
+  - sample_interp 模式：固定频率插值回放，按 wall-clock 插值位置，避免指令积压
+  - feedback 模式：闭环 waypoint 回放，发送目标 → 等待机器人到达(±tol) → 下个目标
+  - JointStateReader：后台线程读取实时关节状态，用于 feedback 模式
+  - interp_joint_position(): numpy.searchsorted 定位 + 线性插值
+  - wait_until_reached(): 循环检测关节误差，超时/到达退出，resend_hz 保持目标活跃
+
+data_collection/replay_joint_lqt.py
+【主要作用】优化版关节回放，Hermite 插值、latest-only 发送线程
+【关键模块】
+  - HermiteJointTrajectory: 用 gradient 估计速度，Hermite 基函数 C1 连续插值
+    * t0/t1 归一化到 s ∈ [0,1]，h00/h10/h01/h11 多项式
+  - LatestArmSender: 每个臂独立 latest-only 发送线程
+    * 主循环 update() 更新最新目标 → 发送线程固定频率 set_joint_positions
+    * 旧目标自动覆盖，不会产生 backlog
+  - DualArmSequentialSender: 双臂串行 latest-only 发送（SDK 不稳定时使用）
+  - 数据预处理：_remove_bad_or_duplicate_frames()、_moving_average_edge()、
+    _resample_uniform() 统一重采样
+  - _run_start_alignment(): 当前姿态平滑对齐到录制第一帧（smoothstep 插值）
+  - load_joint_data(): 加载 .npz + json 元信息
+
+================================================================================
+四、数据可视化
+================================================================================
+
+data_collection/data_viz.py
+【主要作用】使用 Rerun.io 可视化录制 episode
+【关键模块】
+  - load_video_frames(): 预加载全部帧到内存（video 模式：cv2.VideoCapture → list of ndarray；
+    image 模式：PIL.Image → ndarray）
+  - build_scalars_from_joints(): 按关节名构建时间序列标量数据
+  - rr.log() 推送：相机图像、关节位置（obs + act 对比）、帧间隔 timing、累计漂移 drift
+  - 支持 --speed 倍速播放、--no-loop、--connect 远程 viewer
+
+================================================================================
+五、格式转换（录制 → LeRobot 标准格式）
+================================================================================
+
+5.1. 同步版本
+
+data_collection/convert_to_lerobot.py（~2375行）
+【主要作用】将采集的 JSON 格式数据转换为 LeRobot Dataset 格式
+【关键模块】
+  【ROBOT_DATA_CONFIG — 机型配置字典】
+    支持 4 种机型：
+      quanta_x1（20维）：master 主臂末端位姿(3+3) + 从臂夹爪(1+1) + 头部(2) + 升降(1) + 里程计(3)
+      quanta_x1_raw_joints（14维）：原始关节(6+6) + 夹爪(1+1)，无末端位姿
+      quanta_x2（23维）：左/右臂末端位姿(3+3+3+3) + 夹爪(1+1) + 头部(2) + 腰部(4) + 里程计(3)
+      desktop（14维）：仅左/右臂末端位姿(3+3+3+3) + 夹爪(1+1)
+    每个配置包含：
+      action_order / state_order: 字段顺序列表（保证维度一致）
+      state_source_mapping / action_source_mapping: 数据源映射
+        source: 帧数据中的 key 名
+        type: position / orientation_euler / joint_positions / gripper_position / odom_xy_yaw
+        dim: 维度
+        index: 可选，选取子集
+
+  【核心提取函数】
+    extract_action_v3(frame, robot_type):
+      - 按 action_order 顺序构建动作向量
+      - _resolve_source(): master_ 前缀自动 fallback 到非 master（兼容两种命名）
+      - position / orientation_euler / gripper_position / joint_positions / odom_xy_yaw 五类提取
+      - orientation_euler: quaternion_to_euler 四元数→欧拉角（roll, pitch, yaw）
+      - odom_xy_yaw: position (x,y) + quaternion→yaw
+      - 字段缺失时用 0.0 填充
+
+    extract_state_v3(frame, robot_type):
+      - 逻辑与 extract_action_v3 对称，从 observation 中提取状态
+      - 同样支持 _resolve_state_source 自动 fallback
+
+    extract_joint_names_from_v3_episode():
+      - 按照 left_arm → right_arm → lift → waist → left_gripper → right_gripper → head 顺序展平
+
+    quaternion_to_euler(x, y, z, w):
+      - 标准四元数→欧拉角转换，singularity 处理（|sinp| >= 1 时取 ±90°）
+
+  【数据集创建】
+    create_lerobot_dataset():
+      - 构建 LeRobotDataset features：state(向量)、action(向量)、每路相机 image、
+        task 索引、额外传感器 observation_
+      - 支持 --resize-width/height 图像缩放
+      - 支持 --delta-action（next_state - current_state）
+      - 支持 --relative-start（减去第一帧）
+      - 支持 --select-joints 筛选关节子集
+      - 支持 --include-sensors 包含额外传感器字段
+      - 支持 --use-videos（视频后端 pyav / opencv）
+
+    convert_dataset():
+      - 全流程管线：加载 metadata → 检测关节名/相机/分辨率 → 分析 action 维度 →
+        逐 episode 逐帧处理
+      - process_single_frame(): 处理 V3/V2/Old 格式兼容，
+        从文件或 video capture 读取图像，提取传感器数据
+      - generate_future_actions(): 当没有 action 字段时，用未来 state 作为 action
+        （chunk_size 默认 32）
+
+5.2. 异步版本（推荐）
+
+data_collection/convert_to_lerobot_async.py（~2695行）
+【主要作用】并行化转换，多进程加速
+【关键模块】
+  - 与同步版本共享 ROBOT_DATA_CONFIG 和提取函数逻辑
+  - 优化技术：
+    * orjson 加速 JSON 解析
+    * decord / cv2 并行 I/O（ThreadPoolExecutor _read_image_cv2）
+    * ProcessPoolExecutor 并行处理多个 episode
+  
+  - _process_episode_worker():
+    * 处理单 episode 的所有帧
+    * 图像保存为临时 .npy 文件（需从 video capture 或文件加载）
+    * 返回帧元信息（timestamp, state, action, 图像路径）
+  
+  - convert_dataset() 双路径：
+    * `--processes > 1` 多进程路径：episode 分配到 ProcessPoolExecutor
+      → 主进程加载 .npy → add_frame
+    * `--processes == 1` 串行路径：同同步版本
+
+data_collection/sdk_to_lerobot.sh
+【主要作用】批量转换脚本，依次处理 task_2 到 task_8 的采集数据
+【关键模块】
+  - for 循环调用 convert_to_lerobot_async.py
+  - 每个任务 4 进程并行，--use-videos 视频模式
+
+================================================================================
+六、文件命名规范
+================================================================================
+
+采集阶段输出结构（以 record.py 为例）：
+  output_dir/
+    dataset_metadata.json          # 数据集元信息（episode 列表 + fps + 相机名）
+    episode_0000/
+      episode.json                 # 完整帧数据（JSON，含对齐后的关节/位姿/传感器）
+      head_rgb_stream.mp4          # 头部 RGB 视频（video 模式）
+      left_arm_rgb_stream.mp4      # 左臂 RGB 视频
+      right_arm_rgb_stream.mp4     # 右臂 RGB 视频
+    episode_0001/
+      ...
+
+仅关节录制输出（record_joint_lqt.py）：
+  output_dir/
+    episode_0000/
+      joint_data.npz               # 关节数据（timestamps, left/right_position, velocity, effort）
+      episode.json                 # 元信息 + 帧率诊断
+
+LeRobot 转换输出：
+  output_dir/
+    meta/
+      info.json                    # 数据集信息
+    data/
+      episode_0000.parquet         # state/action 表格数据
+      episode_0000/                # 图像/视频数据
+        camera_*.mp4 / *.jpg
+    ...
+
+
+================================================================================
+八、完整数据流总结
+================================================================================
+
+采集前准备：
+  robot_control_yichu.py --lift-to 0.5 --head --arms → 机器人复位
+
+数据采集（两条路径）：
+  A) 全模态采集：record.py → DataCollector → episode.json + .mp4 + metadata.json
+  B) 仅关节采集：record_joint_lqt.py → JointRecorder → joint_data.npz + episode.json
+
+数据转换：
+  convert_to_lerobot_async.py --input-dir ... --output-dir ... → LeRobotDataset
+  （支持 --processes 4 并行加速，--use-videos 视频模式）
+
+数据回放验证：
+  replay_joint_lqt.py → HermiteJointTrajectory + LatestArmSender
+  data_viz.py → Rerun.io 可视化

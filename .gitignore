@@ -120,3 +120,6 @@ pull_the_door_*/
 # A2 captured test data
 A2/data/
 *.h265
+
+# Vendored third-party source
+yichu_work/third_party/

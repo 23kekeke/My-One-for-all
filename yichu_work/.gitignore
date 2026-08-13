@@ -1,0 +1,41 @@
+# 不提交大数据和模型
+datasets/
+models/
+
+# 缓存
+__pycache__/
+*.pyc
+.pytest_cache/
+.cache/
+
+# 环境和编辑器
+.env
+.venv/
+venv/
+.vscode/
+.idea/
+
+# 数据、视频、输出
+data/
+videos/
+outputs/
+checkpoints/
+logs/
+lerobot_output/
+
+# 大文件类型
+*.mp4
+*.avi
+*.mov
+*.mcap
+*.bag
+*.h264
+*.zip
+*.tar
+*.tar.gz
+*.pt
+*.pth
+*.npy
+*.hdf5
+*.h5
+*.pkl
