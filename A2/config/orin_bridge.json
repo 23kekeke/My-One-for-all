@@ -1,0 +1,105 @@
+{
+  "listen": "0.0.0.0:50061",
+  "bridge_name": "a2-orin-ros2-grpc-bridge",
+  "bridge_version": "0.1.0",
+  "robot_id": "a2",
+  "signal_target_hz": 50.0,
+  "health_window_seconds": 3.0,
+  "subscriber_queue_size": 2048,
+  "streams": [
+    {
+      "name": "head_camera",
+      "topic": "/aima/hal/rgbd_camera/head_front/color/h265",
+      "ros_type": "foxglove_msgs/msg/CompressedVideo",
+      "kind": "video",
+      "target_hz": 15.0,
+      "required": true,
+      "width": 1280,
+      "height": 720
+    },
+    {
+      "name": "left_hand_camera",
+      "topic": "/aima/hal/rgbd_camera/hand_left/color/h265",
+      "ros_type": "foxglove_msgs/msg/CompressedVideo",
+      "kind": "video",
+      "target_hz": 15.0,
+      "required": true,
+      "width": 640,
+      "height": 480
+    },
+    {
+      "name": "right_hand_camera",
+      "topic": "/aima/hal/rgbd_camera/hand_right/color/h265",
+      "ros_type": "foxglove_msgs/msg/CompressedVideo",
+      "kind": "video",
+      "target_hz": 15.0,
+      "required": true,
+      "width": 640,
+      "height": 480
+    },
+    {
+      "name": "arm_joint_state",
+      "topic": "/motion/control/arm_joint_state",
+      "ros_type": "sensor_msgs/msg/JointState",
+      "kind": "state",
+      "target_hz": 50.0,
+      "required": true
+    },
+    {
+      "name": "hand_joint_state",
+      "topic": "/motion/control/hand_joint_state",
+      "ros_type": "sensor_msgs/msg/JointState",
+      "kind": "pending_hand_state",
+      "target_hz": 50.0,
+      "required": true
+    },
+    {
+      "name": "neck_joint_state",
+      "topic": "/motion/control/neck_joint_state",
+      "ros_type": "sensor_msgs/msg/JointState",
+      "kind": "state",
+      "target_hz": 50.0,
+      "required": true
+    },
+    {
+      "name": "arm_joint_command",
+      "topic": "/motion/control/arm_joint_command",
+      "ros_type": "sensor_msgs/msg/JointState",
+      "kind": "command",
+      "target_hz": 50.0,
+      "required": true
+    },
+    {
+      "name": "hand_joint_command",
+      "topic": "/motion/control/hand_joint_command",
+      "ros_type": "sensor_msgs/msg/JointState",
+      "kind": "command",
+      "target_hz": 50.0,
+      "required": true
+    },
+    {
+      "name": "neck_joint_command",
+      "topic": "/motion/control/neck_joint_command",
+      "ros_type": "sensor_msgs/msg/JointState",
+      "kind": "command",
+      "target_hz": 50.0,
+      "required": true
+    },
+    {
+      "name": "tf",
+      "topic": "/tf",
+      "ros_type": "tf2_msgs/msg/TFMessage",
+      "kind": "tf",
+      "target_hz": 50.0,
+      "required": true
+    },
+    {
+      "name": "tf_static",
+      "topic": "/tf_static",
+      "ros_type": "tf2_msgs/msg/TFMessage",
+      "kind": "tf_static",
+      "target_hz": 0.0,
+      "required": true
+    }
+  ]
+}

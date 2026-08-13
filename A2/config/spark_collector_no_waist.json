@@ -1,0 +1,93 @@
+{
+  "server": "192.168.2.50:50061",
+  "output_root": "/home/yichu/A2/data",
+  "buffer_seconds": 5.0,
+  "warmup_seconds": 3.0,
+  "post_roll_seconds": 1.0,
+  "camera_target_hz": 15.0,
+  "signal_target_hz": 50.0,
+  "camera_rate_tolerance": 0.05,
+  "signal_rate_tolerance": 0.05,
+  "camera_alignment_tolerance_ms": 50.0,
+  "camera_alignment_hard_limit_ms": 100.0,
+  "ffmpeg": "/usr/bin/ffmpeg",
+  "streams": [
+    {
+      "name": "head_camera",
+      "topic": "/aima/hal/rgbd_camera/head_front/color/h265",
+      "kind": "video",
+      "target_hz": 15.0,
+      "required": true
+    },
+    {
+      "name": "left_hand_camera",
+      "topic": "/aima/hal/rgbd_camera/hand_left/color/h265",
+      "kind": "video",
+      "target_hz": 15.0,
+      "required": true
+    },
+    {
+      "name": "right_hand_camera",
+      "topic": "/aima/hal/rgbd_camera/hand_right/color/h265",
+      "kind": "video",
+      "target_hz": 15.0,
+      "required": true
+    },
+    {
+      "name": "arm_joint_state",
+      "topic": "/motion/control/arm_joint_state",
+      "kind": "state",
+      "target_hz": 50.0,
+      "required": true
+    },
+    {
+      "name": "hand_joint_state",
+      "topic": "/motion/control/hand_joint_state",
+      "kind": "pending_hand_state",
+      "target_hz": 50.0,
+      "required": true
+    },
+    {
+      "name": "neck_joint_state",
+      "topic": "/motion/control/neck_joint_state",
+      "kind": "state",
+      "target_hz": 50.0,
+      "required": true
+    },
+    {
+      "name": "arm_joint_command",
+      "topic": "/motion/control/arm_joint_command",
+      "kind": "command",
+      "target_hz": 50.0,
+      "required": true
+    },
+    {
+      "name": "hand_joint_command",
+      "topic": "/motion/control/hand_joint_command",
+      "kind": "command",
+      "target_hz": 50.0,
+      "required": true
+    },
+    {
+      "name": "neck_joint_command",
+      "topic": "/motion/control/neck_joint_command",
+      "kind": "command",
+      "target_hz": 50.0,
+      "required": true
+    },
+    {
+      "name": "tf",
+      "topic": "/tf",
+      "kind": "tf",
+      "target_hz": 50.0,
+      "required": true
+    },
+    {
+      "name": "tf_static",
+      "topic": "/tf_static",
+      "kind": "tf_static",
+      "target_hz": 0.0,
+      "required": true
+    }
+  ]
+}

@@ -1,0 +1,122 @@
+# Git history
+.git/
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+credentials*
+secrets*
+cookies.json
+login_result.json
+user_info.json
+
+# Python/Conda environments and caches
+.venv/
+.venv*/
+venv/
+venv*/
+env/
+.conda/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.uv_cache/
+uv_cache/
+site-packages/
+
+# JS/build/runtime
+node_modules/
+build/
+dist/
+install/
+log/
+logs/
+tmp/
+runs/
+wandb/
+outputs/
+output/
+wheels_cache/
+pack/
+
+# Models/checkpoints
+models/
+model/
+checkpoints/
+checkpoint/
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.engine
+*.h5
+*.hdf5
+
+# Datasets and robot recordings
+datasets/
+dataset/
+collected_data/
+lerobot_data/
+lerobot_p7/
+lerobot_dataset_complete/
+lerobot_dataset_readable/
+episode_*/
+task_*/
+sdk_test/
+pull_the_door_*/
+
+# Data formats
+*.bag
+*.db3
+*.mcap
+*.mcap.zstd
+*.parquet
+*.arrow
+*.feather
+*.npy
+*.npz
+*.pkl
+*.pickle
+
+# Videos
+*.mp4
+*.mov
+*.avi
+*.mkv
+
+# Archives and backups
+*.tar
+*.tar.*
+*.tgz
+*.zip
+*.7z
+*.rar
+*.bak
+*.backup
+
+# Compiled/install files
+*.so
+*.a
+*.o
+*.whl
+*.deb
+*.AppImage
+*.exe
+
+# OS metadata
+.DS_Store
+._*
+*~
+
+# A2 captured test data
+A2/data/
+*.h265

@@ -1,0 +1,103 @@
+syntax = "proto3";
+
+package a2.data.v1;
+
+message Empty {}
+
+message SubscribeRequest {
+  repeated string stream_names = 1;
+}
+
+message VideoPacket {
+  bytes annexb = 1;
+  string format = 2;
+  string frame_id = 3;
+  uint32 width = 4;
+  uint32 height = 5;
+  bool has_vps = 6;
+  bool has_sps = 7;
+  bool has_pps = 8;
+  bool is_irap = 9;
+}
+
+message JointSample {
+  repeated string name = 1;
+  repeated double position = 2;
+  repeated double velocity = 3;
+  repeated double effort = 4;
+}
+
+message Transform {
+  string parent_frame = 1;
+  string child_frame = 2;
+  int64 timestamp_ns = 3;
+  repeated double translation_xyz = 4;
+  repeated double rotation_xyzw = 5;
+}
+
+message TransformBatch {
+  repeated Transform transforms = 1;
+}
+
+message OpaqueSample {
+  string type_name = 1;
+  string content_type = 2;
+  bytes data = 3;
+}
+
+message StreamEnvelope {
+  string stream_name = 1;
+  string ros_type = 2;
+  uint64 sequence = 3;
+  int64 source_timestamp_ns = 4;
+  int64 edge_receive_timestamp_ns = 5;
+  int64 sample_timestamp_ns = 6;
+
+  oneof sample {
+    VideoPacket video = 10;
+    JointSample joint = 11;
+    TransformBatch tf = 12;
+    OpaqueSample opaque = 13;
+  }
+}
+
+message StreamDescriptor {
+  string stream_name = 1;
+  string ros_topic = 2;
+  string ros_type = 3;
+  string kind = 4;
+  double target_hz = 5;
+  bool required = 6;
+}
+
+message StreamManifest {
+  string bridge_name = 1;
+  string bridge_version = 2;
+  string robot_id = 3;
+  repeated StreamDescriptor streams = 4;
+}
+
+message HealthRequest {
+  repeated string stream_names = 1;
+}
+
+message StreamHealth {
+  string stream_name = 1;
+  bool ready = 2;
+  double rate_hz = 3;
+  uint64 received = 4;
+  uint64 dropped = 5;
+  int64 last_source_timestamp_ns = 6;
+  string detail = 7;
+}
+
+message HealthSnapshot {
+  int64 timestamp_ns = 1;
+  repeated StreamHealth streams = 2;
+}
+
+service A2DataService {
+  rpc GetManifest(Empty) returns (StreamManifest);
+  rpc WatchHealth(HealthRequest) returns (stream HealthSnapshot);
+  rpc Subscribe(SubscribeRequest) returns (stream StreamEnvelope);
+}

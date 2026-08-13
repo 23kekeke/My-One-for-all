@@ -1,0 +1,20 @@
+ARG BASE_IMAGE=ros:humble-ros-base-jammy
+FROM ${BASE_IMAGE}
+
+SHELL ["/bin/bash", "-c"]
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ffmpeg \
+        python3 \
+        ros-humble-foxglove-msgs \
+        ros-humble-rosbag2-py \
+        ros-humble-rosbag2-storage-default-plugins \
+        ros-humble-rmw-fastrtps-cpp \
+        ros-humble-tf2-msgs \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+ENTRYPOINT ["/ros_entrypoint.sh"]
+CMD ["bash"]
