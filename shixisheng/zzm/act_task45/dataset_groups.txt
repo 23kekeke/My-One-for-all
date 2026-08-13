@@ -1,0 +1,8 @@
+# One raw dataset directory name per line. This file defines conversion and merge order.
+# Blank lines and lines beginning with # are ignored.
+task_45_0001
+task_45_0002
+task_45_0003
+
+# task_45_0004 is intentionally excluded until dataset_metadata.json is repaired.
+
