@@ -1,0 +1,19 @@
+{
+  "deploy_root": "/data/dongguan_data_checkpoint_0807/deploy_dgx",
+  "checkpoints": [
+    "checkpoints/checkpoint-14000",
+    "checkpoints/checkpoint-15000"
+  ],
+  "default_checkpoint": "checkpoints/checkpoint-15000",
+  "models": [
+    "models/GR00T-N1.7-3B",
+    "models/Cosmos-Reason2-2B"
+  ],
+  "code": [
+    "code/isaacGr00t",
+    "code/pipeline2",
+    "code/pipeline3_biman",
+    "code/pipeline5_dongguan_relative"
+  ],
+  "total_size": "60G"
+}

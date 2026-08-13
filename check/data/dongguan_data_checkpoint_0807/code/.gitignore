@@ -1,0 +1,49 @@
+# Python bytecode and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Python environments and package caches
+.venv/
+.venv_*/
+venv/
+env/
+.uv_cache/
+.wheels/
+*.egg-info/
+
+# Editor and OS metadata
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Build and runtime outputs
+build/
+dist/
+tmp/
+logs/
+*.log
+
+# Large ML artifacts and local datasets
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+*.onnx
+*.h5
+*.hdf5
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.mp4
+*.mov
+data/
+datasets/
+checkpoints/
+models/

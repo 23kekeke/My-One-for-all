@@ -1,0 +1,68 @@
+# pipeline7_dongguan_relative_eef_only — 训练命令（可复制）
+#
+# 数据：lerobot_p7/multi_345（772 ep / 88514 frames @15fps）
+# 训练：20D eef-only RELATIVE + delta_indices=[-7,-1,0] + LLM/ViT QLoRA r=32
+# 日志：见 README_train.md
+
+# --- 0) 环境变量 ---
+export GR00T_COSMOS_MODEL_PATH="/home/ubuntu/projects/zibianliang_env/Cosmos-Reason2-2B"
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+export TOKENIZERS_PARALLELISM=false
+export NO_ALBUMENTATIONS_UPDATE=1
+export PIPELINE2_QLORA=1
+export GROOT_PATCH_MISTRAL=1
+export GROOT_HF_LOCAL_FIRST=1
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export PYTHONPATH="/home/ubuntu/projects/zibianliang_env/isaacGr00t:/home/ubuntu/projects/zibianliang_env/pipeline2:/home/ubuntu/projects/zibianliang_env/pipeline3_biman:/home/ubuntu/projects/zibianliang_env/pipeline7_dongguan_relative_eef_only:${PYTHONPATH:-}"
+
+cd /home/ubuntu/projects/zibianliang_env/pipeline7_dongguan_relative_eef_only
+
+# --- 1) 训练前确认（A2）---
+../isaacGr00t/.venv/bin/python pre_train_confirm.py
+../isaacGr00t/.venv/bin/python confirm_train_paths.py
+
+# --- 2) Overfit smoke（Phase B）---
+../isaacGr00t/.venv/bin/python step7_smoke_overfit_relative.py \
+  --source-dataset-path /data/dongguan_data_checkpoint_0807/lerobot_p7/multi_345 \
+  --episode-index 0 --max-steps 320 --save-steps 160
+
+# --- 3) 正式训练（推荐：launch_train.sh，自动 tee train.log）---
+./launch_train.sh multi345_v1
+
+# 可选：启用 W&B
+# ./launch_train.sh multi345_v1 --use-wandb
+
+# 断点续训（同一 output_dir）
+# ./launch_train.sh multi345_v1 --resume-from-checkpoint
+
+# --- 3b) 等价裸命令 ---
+RUN_DIR=/data/dongguan_data_checkpoint_0807/output_p7/dongguan_multi345_eef_only_relative_qlora_r32_vit_r32_bs2_ga4
+mkdir -p "$RUN_DIR"
+
+../isaacGr00t/.venv/bin/python dongguan_eef_only_finetune_entry.py \
+  --base-model-path /home/ubuntu/projects/zibianliang_env/GR00T-N1.7-3B \
+  --dataset-path /data/dongguan_data_checkpoint_0807/lerobot_p7/multi_345 \
+  --embodiment-tag NEW_EMBODIMENT \
+  --modality-config-path /home/ubuntu/projects/zibianliang_env/pipeline7_dongguan_relative_eef_only/dongguan_eef_only_relative_modality.py \
+  --output-dir "$RUN_DIR" \
+  --num-gpus 1 \
+  --max-steps 15000 \
+  --save-steps 1000 \
+  --save-total-limit 7 \
+  --global-batch-size 2 \
+  --gradient-accumulation-steps 4 \
+  --dataloader-num-workers 2 \
+  --episode-sampling-rate 1.0 \
+  --num-shards-per-epoch 512 \
+  --shard-size 128 \
+  --learning-rate 1e-4 \
+  --warmup-ratio 0.05 \
+  --weight-decay 1e-5 \
+  --no-tune-llm \
+  --no-tune-visual \
+  --tune-projector \
+  --tune-diffusion-model \
+  --state-dropout-prob 0.2 \
+  --wandb-project dongguan-pipeline7 \
+  2>&1 | tee -a "$RUN_DIR/train.log"

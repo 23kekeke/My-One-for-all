@@ -1,0 +1,130 @@
+# Dongguan infer 黏贴手册（Spark 部署包）
+#
+# task_index: 0=grasp(task3)  1=rotate(task4)  2=pull(task5)
+# 换权重：改 --checkpoint（本机有 checkpoint-14000 / checkpoint-15000）
+# 改 SDK/daemon 代码后务必重启终端 B（需 execute_end_pose_trajectory）
+#
+# =============================================================================
+# Checkpoint 动作空间 vs SDK 下发（重要）
+# =============================================================================
+#
+# checkpoint-14000 / checkpoint-15000 action_reps = REL,ABS,REL,REL,ABS,REL：
+#   left/right_eef_9d     : RELATIVE（训练存相对增量；xyz+rot6d）
+#   left/right_gripper    : ABSOLUTE
+#   left/right_joint      : RELATIVE
+#
+# 推理时 policy.get_action 经 processor decode/unapply 后：
+#   → 输出已是绝对 eef_9d / 绝对 joint（相对→绝对已做完）
+#   → live 可直接把绝对 eef 转成 SDK Pose 下发
+#
+# 当前代码实际行为（2026-08）：
+#   [1] per-task home 预位  → set_dual_end_pose（笛卡尔，双手同步慢速）
+#   [2] policy live 执行    → --execute-via end_pose（默认）
+#                              一次 RPC: execute_end_pose_trajectory
+#                              相邻 policy step 之间 densify；中途不重读/不 settle
+#                              gripper 每步跳到 target（不插值）
+#                              整段结束再读回一次；home 后保持 MANIPULATOR_END_POSE
+#   [3] 观测                 → get_end_pose → eef_9d（已用）
+#   回退 joint 路径：加 --execute-via joint --execute-interpolate-hz 100
+#
+# Gripper（绝对，不插值）：
+#   right: 闭合 ≈ -0.018 ~ -0.012 (q01) ；张开 ≈ 1.51 (q99)
+#   left : 几乎不动，约 -0.006 ~ -0.002
+#
+# 正常 trajectory 日志示例：
+#   [dongguan home] leaving MANIPULATOR_END_POSE for policy end_pose execute
+#   execute_via=end_pose
+#   [set_end_pose] arm=right TRAJECTORY policy_wp=15 dense=... ~1.0s ...
+
+
+# =============================================================================
+# 每个新终端先跑
+# =============================================================================
+unset PY DONGGUAN_DEPLOY_ROOT DEPLOY CODE CHECKPOINT
+source /home/yichu/check/data/dongguan_data_checkpoint_0807/env.sh
+# 确认: echo "$CHECKPOINT" 应含 multi345_v1/checkpoint-15000
+
+
+# =============================================================================
+# 终端 B — SDK daemon（xr_lerobot；改代码后务必重启）
+# =============================================================================
+export PYTHONPATH="$CODE/pipeline2:$CODE/pipeline3_biman:${PYTHONPATH:-}"
+cd "$CODE/pipeline3_biman"
+$PY_SDK -m quanta_biman_inference.live_sdk_daemon serve \
+  --server 192.168.1.103:50051 \
+  --bind 127.0.0.1 --port 15101
+
+
+# =============================================================================
+# 终端 C — parity（可选，换机/换权重后）
+# =============================================================================
+cd "$P5"
+$PY parity_check_relative.py --checkpoint "$CHECKPOINT"
+$PY parity_check_relative.py --checkpoint "$CHECKPOINT" --load-policy
+# 成功: Dongguan relative parity: ok=True
+#       action_reps = REL,ABS,REL,REL,ABS,REL  （含 eef REL）
+
+
+# =============================================================================
+# 终端 C — shadow（只推不发；臂不动）
+# =============================================================================
+$PY -m dongguan_inference.live_runner \
+  --mode shadow \
+  --checkpoint "$CHECKPOINT" \
+  --task-index 1 \
+  --cycles 10 \
+  --execution-horizon 1 \
+  --interval-sec 0 \
+  --server 192.168.1.103:50051 \
+  --sdk-backend daemon \
+  --sdk-daemon-url 127.0.0.1:15101 \
+  --sdk-backend-required
+
+
+# =============================================================================
+# 终端 C — live execute（默认 end_pose trajectory，一次 RPC 吃完整段 horizon）
+# =============================================================================
+$PY -m dongguan_inference.live_runner \
+  --mode live \
+  --execute \
+  --acknowledge QUANTA_BIMAN_32D_LIVE \
+  --checkpoint "$CHECKPOINT" \
+  --task-index 0 \
+  --execute-arms auto \
+  --execute-via end_pose \
+  --cycles 100 \
+  --execution-horizon 15 \
+  --end-pose-interpolate-hz 50 \
+  --end-pose-max-linear-speed-m-s 0.08 \
+  --end-pose-min-duration-sec 0 \
+  --end-pose-max-step-m 0.02 \
+  --end-pose-settle-sec 0 \
+  --train-fps 15 \
+  --interval-sec 0 \
+  --server 192.168.1.103:50051 \
+  --sdk-backend daemon \
+  --sdk-daemon-url 127.0.0.1:15101 \
+  --sdk-backend-required \
+  --preposition-home \
+  --preposition-skip-lift \
+  --per-task-home-json "$DEPLOY/per_task_home.json" \
+  --preposition-tolerance-m 0.025 \
+  --preposition-orient-tolerance-rad 0.20 \
+  --preposition-max-steps 1 \
+  --preposition-lift-settle-sec 1.0
+
+# 换 task: 只改 --task-index 0/1/2
+# 推荐权重: export CHECKPOINT=$DEPLOY/checkpoints/multi345_v1/checkpoint-15000
+# 或 14000: export CHECKPOINT=$DEPLOY/checkpoints/multi345_v1/checkpoint-14000
+# --execution-horizon: 实测 15 才能执行到闭合段（模型 action_horizon=40）
+#
+# task0 夹爪上扬补偿（可选；不带参数 = 不补偿，原逻辑不变；仅 task0 右手）:
+#   --task0-end-pose-pitch-up-deg 5
+#   （正数=上扬；task1/2 无效）
+#
+# 段时长：每段至少 1/train-fps（默认 ~66ms）；大跳由 vmax/max-step 拉长
+# 再加速可拧：
+#   --end-pose-max-linear-speed-m-s 0.15~0.25
+#   --end-pose-max-step-m 0.03~0.05
+#   --end-pose-interpolate-hz 80~100
+# 回退 joint: --execute-via joint --execute-interpolate-hz 100

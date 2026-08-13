@@ -1,0 +1,18 @@
+# pipeline7 — task45 单任务 manifest（解锁+开门合并）
+#
+# 数据源: dongguan_data/sdk_dongguan_0807/task45/
+# Step0–3: 从 raw SDK 重新跑（不复用 multi_345 tmp）
+# Step4+: state 32D / action 20D (eef_9d+gripper RELATIVE, 双手)
+
+defaults:
+  source_fps: 31.0
+  target_fps: 15.0
+  min_duration_sec: 4.0
+
+tasks:
+  - task_id: "45"
+    text: "Right hand rotates the door handle to unlock and right hand pulls the cabinet door open."
+    include: true
+    # 待确认：Step0 统计见 tmp/step_smoke_p7/task45_step0_inventory.json
+    min_duration_sec: 10.0
+    max_duration_sec: 22.0
